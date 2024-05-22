@@ -188,13 +188,13 @@ public sealed class AtomManager {
     }
 
     public EntityUid CreateMovableEntity(DreamObjectMovable movable) {
-        var entity = _entityManager.SpawnEntity(null, new MapCoordinates(0, 0, MapId.Nullspace));
+        var MyEntity = _entityManager.SpawnEntity(null, new MapCoordinates(0, 0, MapId.Nullspace));
 
-        DMISpriteComponent sprite = _entityManager.AddComponent<DMISpriteComponent>(entity);
+        DMISpriteComponent sprite = _entityManager.AddComponent<DMISpriteComponent>(MyEntity);
         sprite.SetAppearance(GetAppearanceFromDefinition(movable.ObjectDefinition));
 
-        _entityToAtom.Add(entity, movable);
-        return entity;
+        _entityToAtom.Add(MyEntity, movable);
+        return MyEntity;
     }
 
     public bool TryGetMovableFromEntity(EntityUid entity, [NotNullWhen(true)] out DreamObjectMovable? movable) {
