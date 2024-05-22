@@ -154,11 +154,11 @@ internal sealed class DreamViewOverlay : Overlay {
         }
 
         var eyeTile = _mapSystem.GetTileRef(gridUid, grid, eyeCoords);
-        var Tiles = CalculateTileVisibility(gridUid, grid, eyeTile, seeVis);
+        var tilesGood = CalculateTileVisibility(gridUid, grid, eyeTile, seeVis);
 
         RefreshRenderTargets(args.WorldHandle, viewportSize);
 
-        CollectVisibleSprites(Tiles, gridUid, grid, eyeTile, seeVis, sight, args.WorldAABB);
+        CollectVisibleSprites(tilesGood, gridUid, grid, eyeTile, seeVis, sight, args.WorldAABB);
         ClearPlanes();
         ProcessSprites(worldHandle, viewportSize, args.WorldAABB);
 
