@@ -18,7 +18,7 @@ namespace OpenDreamRuntime.Procs.Native {
             }
 
             int next = GetNext(src!, bundle.GetArgument(1, "start"), dreamRegex.IsGlobal, haystackString);
-            int end = bundle.GetArgument(2, "end").GetValueAsInteger();
+            int end = bundle.GetArgument(2, "end").MustGetValueAsInteger();
 
             dreamRegex.SetVariable("text", haystack);
 
@@ -134,8 +134,8 @@ namespace OpenDreamRuntime.Procs.Native {
         public static async Task<DreamValue> NativeProc_Replace(AsyncNativeProc.State state) {
             DreamValue haystack = state.GetArgument(0, "haystack");
             DreamValue replacement = state.GetArgument(1, "replacement");
-            int start = state.GetArgument(2, "start").GetValueAsInteger();
-            int end = state.GetArgument(3, "end").GetValueAsInteger();
+            int start = state.GetArgument(2, "start").MustGetValueAsInteger();
+            int end = state.GetArgument(3, "end").MustGetValueAsInteger();
 
             return await RegexReplace(state, state.Src, haystack, replacement, start, end);
         }
@@ -145,12 +145,12 @@ namespace OpenDreamRuntime.Procs.Native {
                 if (isGlobal && regexInstance.GetVariable("text").TryGetValueAsString(out string? lastHaystack) && lastHaystack == haystackString) {
                     DreamValue nextVar = regexInstance.GetVariable("next");
 
-                    return (!nextVar.IsNull) ? nextVar.GetValueAsInteger() : 1;
+                    return (!nextVar.IsNull) ? nextVar.MustGetValueAsInteger() : 1;
                 } else {
                     return 1;
                 }
             } else {
-                return startParam.GetValueAsInteger();
+                return startParam.MustGetValueAsInteger();
             }
         }
     }

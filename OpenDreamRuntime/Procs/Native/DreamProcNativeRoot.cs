@@ -865,8 +865,8 @@ namespace OpenDreamRuntime.Procs.Native {
                 return new DreamValue(failCount == 2 ? 1 : 0);
             }
 
-            int start = bundle.GetArgument(2, "Start").GetValueAsInteger(); //1-indexed
-            int end = bundle.GetArgument(3, "End").GetValueAsInteger(); //1-indexed
+            int start = bundle.GetArgument(2, "Start").MustGetValueAsInteger(); //1-indexed
+            int end = bundle.GetArgument(3, "End").MustGetValueAsInteger(); //1-indexed
             int actualstart;
             int actualcount;
 
