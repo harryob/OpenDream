@@ -17,10 +17,12 @@ internal class DMDocProcParameter(string name, string? type) {
     public readonly string? Type = type;
 }
 
-internal class DMDocProc(string name, List<DMDocProcParameter> parameters, string? returnType) {
+internal class DMDocProc(string name, List<DMDocProcParameter> parameters, string? returnType, bool isUnimplemented, bool isOverride) {
     public readonly string Name = name;
     public readonly List<DMDocProcParameter> Parameters = parameters;
     public readonly string? ReturnType = returnType;
+    public readonly bool IsUnimplemented = isUnimplemented;
+    public readonly bool IsOverride = isOverride;
 }
 
 internal class DMDocObject {
@@ -28,20 +30,16 @@ internal class DMDocObject {
     public readonly List<DMDocVar> Vars = [];
 
     public string? GetParentType() {
-        string? parentType = null;
-        foreach (var var in Vars.Where(var => var.Name == "parent_type"))
-        {
-            parentType = var.Value;
-        }
-
-        return parentType;
+        return Vars.Where(var => var.Name == "parent_type").Select(var => var.Value).FirstOrDefault();
     }
 }
 
-internal class DMDocVar(string name, string? value, bool isOverride) {
+internal class DMDocVar(string name, string? value, bool isOverride, string? type, bool? isUnimplemented) {
     public readonly string Name = name;
     public readonly string? Value = value;
+    public readonly string? Type = type;
     public readonly bool IsOverride = isOverride;
+    public readonly bool? IsUnimplemented = isUnimplemented;
 }
 
 public static partial class Program {
@@ -121,6 +119,7 @@ public static partial class Program {
                 file.Write($"""
                            +++
                            title = "{pair.Key}"
+                           template = "object.html"
 
                            [extra]
                            parent_type = "{obj.GetParentType()}"
@@ -222,13 +221,21 @@ public static partial class Program {
 
         existingContents.TryGetValue("extra", out var existingExtras);
         var extras = (TomlTable?)existingExtras ?? new TomlTable();
-        if (var.Value != null) {
-            extras["default_value"] = var.Value;
-        }
+        if (var.Value != null) extras["default_value"] = var.Value;
+        if (var.Type != null && var.Type != "anything") extras["type"] = var.Type;
+        if (var.IsUnimplemented != null) extras["od_unimplemented"] = var.IsUnimplemented;
 
         extras["is_override"] = var.IsOverride;
 
-        existingContents["extra"] = extras;
+        switch (var.IsUnimplemented)
+        {
+            case false when extras.ContainsKey("od_unimplemented"):
+                extras.Remove("od_unimplemented");
+                break;
+            case true:
+                extras["od_unimplemented"] = var.IsUnimplemented;
+                break;
+        }
 
         return Toml.FromModel(existingContents);
     }
@@ -240,45 +247,55 @@ public static partial class Program {
             existingContents["title"] = proc.Name;
         }
 
-        if (proc.Parameters.Count > 0 || proc.ReturnType != null) {
-            existingContents.TryGetValue("extra", out var potentialExtras);
-            var extras = (TomlTable?)potentialExtras ?? new TomlTable();
+        existingContents.TryGetValue("extra", out var potentialExtras);
+        var extras = (TomlTable?)potentialExtras ?? new TomlTable();
 
-            if (proc.Parameters.Count > 0) {
-                extras.TryGetValue("args", out var potentialArgs);
-                var tomlArgs = new TomlTableArray();
-                var existingArgs = (TomlTableArray?)potentialArgs;
+        if (proc.Parameters.Count > 0) {
+            extras.TryGetValue("args", out var potentialArgs);
+            var tomlArgs = new TomlTableArray();
+            var existingArgs = (TomlTableArray?)potentialArgs;
 
-                Dictionary<string, TomlTable> nameToArg = new Dictionary<string, TomlTable>();
-                if (existingArgs != null)
-                    foreach (var param in existingArgs) {
-                        var name = (string)param["name"];
-                        nameToArg[name] = param;
-                    }
-
-                foreach (var parameter in proc.Parameters) {
-                    TomlTable? param = null;
-
-                    var tomlParameter = param ?? new TomlTable {
-                        ["name"] = parameter.Name
-                    };
-                    if (parameter.Type != null) tomlParameter["type"] = parameter.Type;
-                    if (nameToArg.ContainsKey(parameter.Name) && nameToArg[parameter.Name].TryGetValue("description", out var value)) {
-                        tomlParameter["description"] = value;
-                    }
-
-                    tomlArgs.Add(tomlParameter);
+            Dictionary<string, TomlTable> nameToArg = new Dictionary<string, TomlTable>();
+            if (existingArgs != null)
+                foreach (var param in existingArgs) {
+                    var name = (string)param["name"];
+                    nameToArg[name] = param;
                 }
 
-                extras["args"] = tomlArgs;
+            foreach (var parameter in proc.Parameters) {
+                TomlTable? param = null;
+
+                var tomlParameter = param ?? new TomlTable {
+                    ["name"] = parameter.Name
+                };
+                if (parameter.Type != null) tomlParameter["type"] = parameter.Type;
+                if (nameToArg.ContainsKey(parameter.Name) && nameToArg[parameter.Name].TryGetValue("description", out var value)) {
+                    tomlParameter["description"] = value;
+                }
+
+                tomlArgs.Add(tomlParameter);
             }
 
-            if (proc.ReturnType != null) {
-                extras["return_type"] = proc.ReturnType;
-            }
-
-            existingContents["extra"] = extras;
+            extras["args"] = tomlArgs;
         }
+
+        if (proc.ReturnType != null) {
+            extras["return_type"] = proc.ReturnType;
+        }
+
+        extras["is_override"] = proc.IsOverride;
+
+        switch (proc.IsUnimplemented)
+        {
+            case false when extras.ContainsKey("od_unimplemented"):
+                extras.Remove("od_unimplemented");
+                break;
+            case true:
+                extras["od_unimplemented"] = proc.IsUnimplemented;
+                break;
+        }
+
+        existingContents["extra"] = extras;
 
         return Toml.FromModel(existingContents);
     }
@@ -299,9 +316,20 @@ public static partial class Program {
                             new DMDocProcParameter(parameter.Name, parameter.ObjectType?.PathString));
                     }
 
+                    var unimplemented = false;
+                    if (procDefinition.Body?.SetStatements != null)
+                        foreach (var potentialStatement in procDefinition.Body?.SetStatements!) {
+                            if (potentialStatement is DMASTProcStatementSet { Attribute: "opendream_unimplemented" }) {
+                                unimplemented = true;
+                            }
+                        }
+
                     DMDocProc newProc = new(procDefinition.Name,
                         parsedParameters,
-                        procDefinition.ReturnTypes?.ToString().Trim('"') ?? procDefinition.ReturnTypes?.TypePath?.PathString);
+                        procDefinition.ReturnTypes?.ToString().Trim('"') ?? procDefinition.ReturnTypes?.TypePath?.PathString,
+                        unimplemented,
+                        procDefinition.IsOverride
+                        );
 
                     if (procDefinition.ObjectPath.PathString != "/") {
                         Objects[procDefinition.ObjectPath.PathString].Procs.Add(newProc);
@@ -317,7 +345,10 @@ public static partial class Program {
 
                     varDefinitionObj.Vars.Add(new DMDocVar(varDefinition.Name,
                         GetValueFromDmastExpression(varDefinition.Value),
-                        false));
+                        false,
+                        varDefinition.Type?.PathString ?? varDefinition.ValType.ToString().Trim('"'),
+                        varDefinition.ValType.IsUnimplemented
+                        ));
                     break;
 
                 case DMASTObjectVarOverride varOverride:
@@ -325,7 +356,10 @@ public static partial class Program {
 
                     varOverrideObj.Vars.Add(new DMDocVar(varOverride.VarName,
                         GetValueFromDmastExpression(varOverride.Value),
-                        true));
+                        true,
+                        null,
+                        null
+                        ));
                     break;
             }
         }
