@@ -48,7 +48,16 @@ public static partial class Program {
 
     public static void Main(string[] args) {
         var docPath = "od-dm-reference";
+        string? dmStandardDirectory = null;
         foreach (var arg in args) {
+            if (arg.StartsWith("--standard")) {
+                if (!arg.Contains('=')) {
+                    throw new Exception("Standard option must point to a path, eg, --standard=/path/to/standard");
+                }
+
+                dmStandardDirectory = arg.Split("=").Last();
+            }
+
             if (!arg.StartsWith("--documentation")) continue;
             if (!arg.Contains('=')) {
                 throw new Exception("Documentation option must point to a path, eg --documentation=/path/to/repo");
@@ -61,8 +70,10 @@ public static partial class Program {
 
         DMCompiler.DMCompiler.Settings = new DMCompilerSettings();
 
-        var compilerDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty;
-        var dmStandardDirectory = Path.Join(compilerDirectory, "DMStandard");
+        if (dmStandardDirectory == null) {
+            var compilerDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? string.Empty;
+            dmStandardDirectory = Path.Join(compilerDirectory, "DMStandard");
+        }
 
         preprocessor.IncludeFile(dmStandardDirectory, "_Standard.dm");
         preprocessor.IncludeFile(dmStandardDirectory, "DefaultPragmaConfig.dm");
