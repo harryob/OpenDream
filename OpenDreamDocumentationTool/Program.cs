@@ -7,10 +7,9 @@ using DMCompiler.Compiler.DM.AST;
 using DMCompiler.Compiler.DMPreprocessor;
 using Tomlyn;
 using Tomlyn.Model;
+using Tomlyn.Syntax;
 
 namespace OpenDreamDocumentationTool;
-
-internal delegate string CallbackProcess(TomlTable existingContents, object toProcess);
 
 internal class DMDocProcParameter(string name, string? type) {
     public readonly string Name = name;
@@ -98,7 +97,7 @@ public static partial class Program {
 
             var pageTitle = (string)doc["title"];
 
-            if (file.Contains("_proc")) {
+            if (file.Contains("objects/proc")) {
                 pathToFile["globalProcs"] = file;
                 continue;
             }
@@ -183,13 +182,13 @@ public static partial class Program {
         }
     }
 
-    private static void ProcessPage(string path, object dmObj, CallbackProcess handler) {
+    private static void ProcessPage(string path, object dmObj, Func<TomlTable, object, string, string> handler) {
         if (File.Exists(path)) {
             var existingContents = File.ReadAllText(path);
             var frontmatter = GetFrontmatter(existingContents);
             if (frontmatter != null) {
                 var frontmatterModel = Toml.ToModel(frontmatter);
-                var newFrontmatter = handler(frontmatterModel, dmObj);
+                var newFrontmatter = handler(frontmatterModel, dmObj, path);
                 if (frontmatter == newFrontmatter) {
                     return;
                 }
@@ -199,12 +198,12 @@ public static partial class Program {
                 return;
             }
 
-            var newContent = handler(new TomlTable(), dmObj);
+            var newContent = handler(new TomlTable(), dmObj, path);
             WriteToNewFile(newContent, path);
             return;
         }
 
-        var newFileContent = handler(new TomlTable(), dmObj);
+        var newFileContent = handler(new TomlTable(), dmObj, path);
         WriteToNewFile(newFileContent, path);
     }
 
@@ -223,20 +222,26 @@ public static partial class Program {
         file.Write(newPageContents);
     }
 
-    private static string ProcessVar(TomlTable existingContents, object toProcess) {
+    private static string ProcessVar(TomlTable existingContents, object toProcess, string path) {
         var var = (DMDocVar)toProcess;
 
         if (!existingContents.ContainsKey("title")) {
-            existingContents["title"] = var.Name;
+            SetTomlValue(existingContents, "title", var.Name);
+        }
+
+        if (path.Split('/').Last().Replace(".md", "") != var.Name) {
+            SetTomlValue(existingContents, "slug", var.Name);
         }
 
         existingContents.TryGetValue("extra", out var existingExtras);
         var extras = (TomlTable?)existingExtras ?? new TomlTable();
-        if (var.Value != null) extras["default_value"] = var.Value;
-        if (var.Type != null && var.Type != "anything") extras["type"] = var.Type;
-        if (var.IsUnimplemented != null) extras["od_unimplemented"] = var.IsUnimplemented;
+        if (var.Value != null) SetTomlValue(extras, "default_value", var.Value);
+        if (var.Type != null && var.Type != "anything") SetTomlValue(extras, "type", var.Type);
+        if (var.IsUnimplemented != null) SetTomlValue(extras, "od_unimplemented", var.IsUnimplemented);
 
         extras["is_override"] = var.IsOverride;
+
+        SetTomlValue(extras, "is_override", var.IsOverride);
 
         switch (var.IsUnimplemented)
         {
@@ -251,11 +256,15 @@ public static partial class Program {
         return Toml.FromModel(existingContents);
     }
 
-    private static string ProcessProc(TomlTable existingContents, object toProcess) {
+    private static string ProcessProc(TomlTable existingContents, object toProcess, string path) {
         var proc = (DMDocProc)toProcess;
 
         if (!existingContents.ContainsKey("title")) {
             existingContents["title"] = proc.Name;
+        }
+
+        if (path.Split('/').Last().Replace(".md", "") != proc.Name) {
+            SetTomlValue(existingContents, "slug", proc.Name);
         }
 
         existingContents.TryGetValue("extra", out var potentialExtras);
@@ -266,7 +275,7 @@ public static partial class Program {
             var tomlArgs = new TomlTableArray();
             var existingArgs = (TomlTableArray?)potentialArgs;
 
-            Dictionary<string, TomlTable> nameToArg = new Dictionary<string, TomlTable>();
+            Dictionary<string, TomlTable?> nameToArg = new Dictionary<string, TomlTable?>();
             if (existingArgs != null)
                 foreach (var param in existingArgs) {
                     var name = (string)param["name"];
@@ -274,15 +283,11 @@ public static partial class Program {
                 }
 
             foreach (var parameter in proc.Parameters) {
-                TomlTable? param = null;
+                nameToArg.TryGetValue(parameter.Name, out TomlTable? param);
 
-                var tomlParameter = param ?? new TomlTable {
-                    ["name"] = parameter.Name
-                };
-                if (parameter.Type != null) tomlParameter["type"] = parameter.Type;
-                if (nameToArg.ContainsKey(parameter.Name) && nameToArg[parameter.Name].TryGetValue("description", out var value)) {
-                    tomlParameter["description"] = value;
-                }
+                var tomlParameter = param ?? new TomlTable();
+                SetTomlValue(tomlParameter, "name", parameter.Name, "AUTOGEN STATIC");
+                if (parameter.Type != null) SetTomlValue(tomlParameter, "type", parameter.Type);
 
                 tomlArgs.Add(tomlParameter);
             }
@@ -291,10 +296,10 @@ public static partial class Program {
         }
 
         if (proc.ReturnType != null) {
-            extras["return_type"] = proc.ReturnType;
+            SetTomlValue(extras, "return_type", proc.ReturnType);
         }
 
-        extras["is_override"] = proc.IsOverride;
+        SetTomlValue(extras, "is_override", proc.IsOverride);
 
         switch (proc.IsUnimplemented)
         {
@@ -302,7 +307,7 @@ public static partial class Program {
                 extras.Remove("od_unimplemented");
                 break;
             case true:
-                extras["od_unimplemented"] = proc.IsUnimplemented;
+                SetTomlValue(extras, "od_unimplemented", proc.IsUnimplemented);
                 break;
         }
 
@@ -374,6 +379,35 @@ public static partial class Program {
                     break;
             }
         }
+    }
+
+    private static void SetTomlValue(TomlTable toml, string key, object? value, string comment = "AUTOGEN FIELD") {
+        if (IsTomlSkip(toml, key)) {
+            return;
+        }
+
+        toml[key] = value!;
+        toml.PropertiesMetadata?.SetProperty(key,
+            new TomlPropertyMetadata {
+                TrailingTrivia = [
+                    new TomlSyntaxTriviaMetadata(TokenKind.Whitespaces, " "),
+                    new TomlSyntaxTriviaMetadata(TokenKind.Comment, $"# {comment}")
+                ]
+            });
+    }
+
+    private static bool IsTomlSkip(TomlTable toml, string key) {
+        if (toml.PropertiesMetadata?.TryGetProperty(key, out var metadata) != true) return false;
+
+        if (metadata?.TrailingTrivia == null) return false;
+
+        foreach (var meta in metadata.TrailingTrivia) {
+            if (meta.Text != null && meta.Text.Contains("AUTOGEN SKIP")) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
